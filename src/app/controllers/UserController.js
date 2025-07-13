@@ -5,48 +5,55 @@ secretKey = process.env.SECRET_KEY;
 
 class userController {
     login = async (req, res) => {
-        try {
-            const userBody = req.body;
-            const user = await accountModel.findOne({
-                email: String(userBody.username),
-            });
+    try {
+        const userBody = req.body;
+        console.log(userBody)
+        const user = await accountModel.findOne({
+            email: String(userBody.username),
+        });
 
-            const hashedPassword = await bcrypt.hash(userBody.password, 10);
-            console.log(hashedPassword)
+        // XÓA DÒNG NÀY - không cần hash password khi login
+        // const hashedPassword = await bcrypt.hash(userBody.password, 10);
+        // console.log(hashedPassword)
 
-            if (!user) {
-                return res
-                    .status(404)
-                    .json({ message: 'User not found', status: 'error' });
-            }
-
-            const isPasswordValid = await bcrypt.compare(
-                userBody.password,
-                user.password,
-            );
-
-
-            if (!isPasswordValid) {
-                return res.status(401).json({ message: 'Invalid password' });
-            }
-
-            const token = jwt.sign({ id: user._id }, secretKey, {
-                expiresIn: '1h',
-            });
-            const signStatus = {
-                status: 'ok',
-                type: 'account',
-                currentAuthority: user.access,
-            };
-
-            res.json({ token, signStatus });
-            console.log(signStatus);
-            console.log(token);
-        } catch (error) {
-            console.error(error);
-            res.status(500).json({ message: 'An error occurred' });
+        if (!user) {
+            return res
+                .status(404)
+                .json({ message: 'Tên tài khoản không đúng', status: 'error' });
         }
-    };
+
+        const isPasswordValid = await bcrypt.compare(
+            userBody.password,
+            user.password,
+        );
+
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: 'Mật khẩu đăng nhập không đúng' });
+        }
+
+        const token = jwt.sign({ id: user._id }, secretKey, {
+            expiresIn: '1h',
+        });
+        
+        const signStatus = {
+            status: 'ok',
+            type: 'account',
+            currentAuthority: user.access,
+        };
+
+        // SỬA: Trả về accessToken thay vì token
+        res.json({ 
+            accessToken: token,  // Đổi từ token thành accessToken
+            signStatus 
+        });
+        
+        console.log(signStatus);
+        console.log(token);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'An error occurred' });
+    }
+};
 
     register = async (req, res) => {
         try {
@@ -128,18 +135,26 @@ class userController {
         });
     }
 
-    findUserByToken = async (req, res) => {
-        try {
-            const token = req.body;
-            const decodedToken = jwt.verify(token.token, secretKey);
-            const user = await accountModel.findOne({
-                _id: String(decodedToken.id),
-            });
+    // UserController.js - findUserByToken
+findUserByToken = async (req, res) => {
+    try {
+        const { token } = req.body; // Lấy token từ body
+        if (!token) {
+            return res.status(401).json({ message: 'Token is required' });
+        }
+        
+        const decodedToken = jwt.verify(token, secretKey);
+        const user = await accountModel.findOne({
+            _id: String(decodedToken.id),
+        });
 
-            if (!user) {
-                return res.status(404).json({ message: 'User not found' });
-            }
-            res.json({
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        
+        // Trả về format phù hợp với Frontend
+        res.json({
+            data: {
                 name: user.name,
                 access: user.access,
                 avatar: user.avatar,
@@ -147,12 +162,13 @@ class userController {
                 phone: user.phone,
                 email: user.email,
                 address: user.address,
-            });
-        } catch (error) {
-            console.error(error);
-            res.status(500).json({ message: 'An error occurred' });
-        }
-    };
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(401).json({ message: 'Invalid token' });
+    }
+};
 
     updateUser = async (req, res) => {
         const userBody = req.body;

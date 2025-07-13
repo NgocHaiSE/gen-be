@@ -18,7 +18,7 @@ router.post('/breast-record/get-health-record', BreastRecordController.getById);
 router.post('/breast-record/delete-health-record', BreastRecordController.deleteById);
 router.get('/breast-record/get-all', BreastRecordController.getAll);
 router.post('/breast-record/search', BreastRecordController.search);
-router.post('/breast-record/get-by-testcase', BreastRecordController.getByIdentID);
+// router.post('/breast-record/get-by-testcase', BreastRecordController.getByIdentID);
 
 
 router.post('/colorectal-record/save', ColorectalRecordController.save);
@@ -34,7 +34,7 @@ router.post('/liver-record/get-health-record', LiverRecordController.getById);
 router.post('/liver-record/delete-health-record', LiverRecordController.deleteById);
 router.get('/liver-record/get-all', LiverRecordController.getAll);
 router.post('/liver-record/search', LiverRecordController.search);
-router.post('/liver-record/get-by-testcase', LiverRecordController.getByIdentID);
+// router.post('/liver-record/get-by-testcase', LiverRecordController.getByIdentID);
 
 
 router.post('/thyroid-record/save', ThyroidRecordController.save);
@@ -42,7 +42,7 @@ router.post('/thyroid-record/get-health-record', ThyroidRecordController.getById
 router.post('/thyroid-record/delete-health-record', ThyroidRecordController.deleteById);
 router.get('/thyroid-record/get-all', ThyroidRecordController.getAll);
 router.post('/thyroid-record/search', ThyroidRecordController.search);
-router.post('/thyroid-record/get-by-testcase', ThyroidRecordController.getByIdentID);
+// router.post('/thyroid-record/get-by-testcase', ThyroidRecordController.getByIdentID);
 
 
 module.exports = router;

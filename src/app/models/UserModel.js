@@ -13,4 +13,4 @@ const accountModel = new Schema({
     updateAt: { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model('account_information', accountModel);
+module.exports = mongoose.model('account_informations', accountModel);
