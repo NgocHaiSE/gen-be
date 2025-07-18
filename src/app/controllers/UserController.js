@@ -1,34 +1,39 @@
 const accountModel = require('../models/UserModel');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-secretKey = process.env.SECRET_KEY;
+const secretKey = process.env.SECRET_KEY;
 
 class userController {
     login = async (req, res) => {
     try {
-        const userBody = req.body;
-        console.log(userBody)
-        const user = await accountModel.findOne({
-            email: String(userBody.username),
-        });
-
-        // XÓA DÒNG NÀY - không cần hash password khi login
-        // const hashedPassword = await bcrypt.hash(userBody.password, 10);
-        // console.log(hashedPassword)
-
-        if (!user) {
-            return res
-                .status(404)
-                .json({ message: 'Tên tài khoản không đúng', status: 'error' });
+        const { username, password } = req.body;
+        
+        // Validate input
+        if (!username || !password) {
+            return res.status(400).json({ 
+                message: 'Username and password are required', 
+                status: 'error' 
+            });
         }
 
-        const isPasswordValid = await bcrypt.compare(
-            userBody.password,
-            user.password,
-        );
+        const user = await accountModel.findOne({
+            email: String(username),
+        });
+
+        if (!user) {
+            return res.status(404).json({ 
+                message: 'Tên tài khoản không đúng', 
+                status: 'error' 
+            });
+        }
+
+        const isPasswordValid = await bcrypt.compare(password, user.password);
 
         if (!isPasswordValid) {
-            return res.status(401).json({ message: 'Mật khẩu đăng nhập không đúng' });
+            return res.status(401).json({ 
+                message: 'Mật khẩu đăng nhập không đúng',
+                status: 'error'
+            });
         }
 
         const token = jwt.sign({ id: user._id }, secretKey, {
@@ -41,17 +46,17 @@ class userController {
             currentAuthority: user.access,
         };
 
-        // SỬA: Trả về accessToken thay vì token
         res.json({ 
-            accessToken: token,  // Đổi từ token thành accessToken
+            accessToken: token,
             signStatus 
         });
         
-        console.log(signStatus);
-        console.log(token);
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: 'An error occurred' });
+        res.status(500).json({ 
+            message: 'An error occurred',
+            status: 'error'
+        });
     }
 };
 
@@ -135,25 +140,36 @@ class userController {
         });
     }
 
-    // UserController.js - findUserByToken
+// Debug trong Backend - src/app/controllers/UserController.js
+// Thêm vào method findUserByToken
+
 findUserByToken = async (req, res) => {
     try {
-        const { token } = req.body; // Lấy token từ body
+        const { token } = req.body;
+        console.log('🔍 Received token request:', { tokenExists: !!token });
+        
         if (!token) {
+            console.log('❌ No token provided');
             return res.status(401).json({ message: 'Token is required' });
         }
         
+        console.log('🔐 Verifying token...');
         const decodedToken = jwt.verify(token, secretKey);
+        console.log('✅ Token verified, user ID:', decodedToken.id);
+        
         const user = await accountModel.findOne({
             _id: String(decodedToken.id),
         });
 
         if (!user) {
+            console.log('❌ User not found for ID:', decodedToken.id);
             return res.status(404).json({ message: 'User not found' });
         }
         
+        console.log('✅ User found:', user.email);
+        
         // Trả về format phù hợp với Frontend
-        res.json({
+        const responseData = {
             data: {
                 name: user.name,
                 access: user.access,
@@ -163,9 +179,12 @@ findUserByToken = async (req, res) => {
                 email: user.email,
                 address: user.address,
             }
-        });
+        };
+        
+        console.log('📤 Sending response:', responseData);
+        res.json(responseData);
     } catch (error) {
-        console.error(error);
+        console.error('❌ Token verification failed:', error.message);
         res.status(401).json({ message: 'Invalid token' });
     }
 };
@@ -177,7 +196,7 @@ findUserByToken = async (req, res) => {
             email: String(userBody.email),
         });
         let newPassword;
-        if (userBody.password != undefined || userBody.password == '') {
+        if (userBody.password && userBody.password !== '') {
             newPassword = await bcrypt.hash(userBody.password, 10);
         } else {
             newPassword = user.password;
@@ -199,7 +218,7 @@ findUserByToken = async (req, res) => {
             return res.sendStatus(401);
         }
 
-        jwt.verify(token, 'secret', (err, user) => {
+        jwt.verify(token, secretKey, (err, user) => {
             if (err) {
                 return res.sendStatus(403);
             }
