@@ -14,5 +14,6 @@ router.get('/find/:id', testCaseController.findByID);
 router.post('/add', testCaseController.addTest);
 router.put('/update-test', testCaseController.updateTest);
 router.post('/add-result-test', testCaseController.addTestResult);
+router.post('/download', testCaseController.download);
 
 module.exports = router;
