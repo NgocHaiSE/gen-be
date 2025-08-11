@@ -25,6 +25,7 @@ const dataTestModel = new Schema({
     VariationType: String,
     VariantLength: String,
     Position: String,
+    Chromosome: String,
     DrugResponse: String,
     VariantRate: String,
     ReadDepth: String,
