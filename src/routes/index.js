@@ -1,3 +1,4 @@
+// src/routes/index.js - Updated version với File routes
 const normalLungRouter = require('./normalGene/normalLungGene');
 const normalBreastRouter = require('./normalGene/normalBreastGene');
 const normalColorectalRouter = require('./normalGene/normalColorectalGene');
@@ -20,6 +21,8 @@ const healthRecordRouter = require('./HealthRecord');
 const downloadRouter = require('./Download');
 const uploadFileRouter = require('./UploadFile');
 const articleRouter = require('./Article');
+
+const fileRouter = require('./File');
 
 function routes(app) {
     app.use('/normal-lung-gene', normalLungRouter);
@@ -44,6 +47,8 @@ function routes(app) {
     app.use('/download', downloadRouter);
     app.use('/', healthRecordRouter);
     app.use('/article', articleRouter);
+
+    app.use('/file', fileRouter);
 
     app.get('/', (req, res) => {
         res.send('Hello World!');
