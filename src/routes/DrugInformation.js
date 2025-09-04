@@ -16,7 +16,7 @@ router.post(
 );
 router.post('/prediction/evidence', drugInformationController.getEvidence);
 router.get('/get', drugInformationController.getDrugBasic);
-router.get('/get-drug', drugInformationController.getDrug);
+router.post('/get-drug', drugInformationController.getDrug);
 // router.post('/search-drug', drugInformationController.searchDrug);
 router.post('/search-drug-by-variant', drugInformationController.searchDrugByVariant);
 

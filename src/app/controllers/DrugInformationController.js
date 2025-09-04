@@ -12,6 +12,111 @@ const ColorectalDrugModel = require('../models/drugCollections/ColorectalDrugMod
 const ThyroidDrugModel = require('../models/drugCollections/ThyroidDrugModel');
 
 
+function buildVariantSearchConditions(variant) {
+    const conditions = [];
+
+    // Loại bỏ khoảng trắng và chuyển thành chữ thường để so sánh
+    const cleanVariant = variant.trim();
+
+    // Pattern 1: Tìm kiếm chính xác nomenclature
+    conditions.push({
+        nomenclature: { $regex: escapeRegex(cleanVariant), $options: 'i' }
+    });
+
+    // Pattern 2: Extract gene name từ variant nếu có dạng NM_xxx(GENE):c.xxx
+    const geneFromVariantMatch = cleanVariant.match(/\(([^)]+)\)/);
+    if (geneFromVariantMatch) {
+        const extractedGene = geneFromVariantMatch[1];
+        conditions.push({
+            gene: { $regex: escapeRegex(extractedGene), $options: 'i' }
+        });
+    }
+
+    // Pattern 3: Extract CDS part - tìm phần c.xxx
+    const cdsMatch = cleanVariant.match(/c\.([^:\s]+)/);
+    if (cdsMatch) {
+        const cdsVariant = `c.${cdsMatch[1]}`;
+        conditions.push({
+            nomenclature: { $regex: escapeRegex(cdsVariant), $options: 'i' }
+        });
+
+        // Tìm trong cds field
+        conditions.push({
+            cds: { $regex: escapeRegex(cdsVariant), $options: 'i' }
+        });
+
+        // Tìm chỉ phần mutation không có c.
+        conditions.push({
+            nomenclature: { $regex: escapeRegex(cdsMatch[1]), $options: 'i' }
+        });
+    }
+
+    // Pattern 4: Extract protein change - tìm phần p.xxx
+    const proteinMatch = cleanVariant.match(/p\.([^:\s]+)/);
+    if (proteinMatch) {
+        const proteinVariant = `p.${proteinMatch[1]}`;
+        conditions.push({
+            nomenclature: { $regex: escapeRegex(proteinVariant), $options: 'i' }
+        });
+
+        // Tìm trong aa_mutation field
+        conditions.push({
+            aa_mutation: { $regex: escapeRegex(proteinVariant), $options: 'i' }
+        });
+    }
+
+    // Pattern 5: Tìm theo RefSeq ID (NM_xxx)
+    const refSeqMatch = cleanVariant.match(/(NM_\d+(?:\.\d+)?)/);
+    if (refSeqMatch) {
+        const refSeqId = refSeqMatch[1];
+        conditions.push({
+            nomenclature: { $regex: escapeRegex(refSeqId), $options: 'i' }
+        });
+    }
+
+    // Pattern 6: Tách variant theo dấu ':' và tìm từng phần
+    if (cleanVariant.includes(':')) {
+        const parts = cleanVariant.split(':');
+        parts.forEach(part => {
+            if (part.trim()) {
+                conditions.push({
+                    nomenclature: { $regex: escapeRegex(part.trim()), $options: 'i' }
+                });
+            }
+        });
+    }
+
+    // Pattern 7: Tìm mutation đơn giản (chỉ phần thay đổi nucleotide/amino acid)
+    // Ví dụ: 672+62A>G từ c.672+62A>G
+    const simpleMutationMatch = cleanVariant.match(/([0-9+\-*]+[A-Z]>[A-Z])/);
+    if (simpleMutationMatch) {
+        const simpleMutation = simpleMutationMatch[1];
+        conditions.push({
+            nomenclature: { $regex: escapeRegex(simpleMutation), $options: 'i' }
+        });
+        conditions.push({
+            mutation: { $regex: escapeRegex(simpleMutation), $options: 'i' }
+        });
+    }
+
+    // Pattern 8: Tìm position information
+    const positionMatch = cleanVariant.match(/([0-9+\-*]+)/);
+    if (positionMatch) {
+        const position = positionMatch[1];
+        conditions.push({
+            position: { $regex: escapeRegex(position), $options: 'i' }
+        });
+    }
+
+    return conditions;
+}
+
+// Helper function để escape special regex characters
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+
 class drugInformationController {
 
     searchDrugByVariant = async (req, res) => {
@@ -34,25 +139,30 @@ class drugInformationController {
             if (!Model) {
                 return res.status(400).json({ message: 'Invalid cancer type' });
             }
-            console.log(Model);
 
             // Tạo điều kiện tìm kiếm
             let query = {};
+
             if (gene) {
                 query.gene = gene;
             }
-            // if (cdna) {
-            //     query.cds = cdna;
-            // }
+
             if (variant) {
-                // Lấy phần trước dấu ':' để so khớp với nomenclature
-                const variantPrefix = variant.split(':')[0];
-                query.nomenclature = { $regex: variantPrefix, $options: 'i' };
+                const refSeqMatch = variant.match(/(NM_\d+(?:\.\d+)?)/);
+
+                if (refSeqMatch) {
+                    // nếu có refSeq thì dùng $and
+                    const refSeqId = refSeqMatch[1];
+                    console.log(`Searching for RefSeq ID: ${refSeqId}`);
+                    query.$and = [
+                        // { variant: { $regex: escapeRegex(variant), $options: 'i' } },
+                        { nomenclature: { $regex: refSeqId, $options: 'i' } }
+                    ];
+                }
             }
 
-            // Nếu cả cdna và variant đều có thì tìm theo cả hai điều kiện
-            const results = await Model.find(query);
             console.log(query);
+            const results = await Model.find(query);
 
             return res.status(200).json(results);
         } catch (error) {
@@ -60,22 +170,10 @@ class drugInformationController {
         }
     };
 
-
-
-// Alternative version with more flexible nomenclature matching
-    searchDrugAdvanced = async (req, res) => {
+    searchDrugByGene = async (req, res) => {
         try {
-            const limit = parseInt(req.query.limit) || 100;
-            const page = parseInt(req.query.page) || 1;
-            const skip = (page - 1) * limit;
-            
-            const typeCancer = req.query.typeCancer || '';
-            const nomenclature = req.body.nomenclature || req.query.nomenclature || '';
-            const geneName = req.body.geneName || req.query.geneName || '';
-            
-            console.log('Advanced search - Cancer type:', typeCancer);
-            console.log('Advanced search - Nomenclature:', nomenclature);
-            console.log('Advanced search - Gene name:', geneName);
+            const { gene } = req.body;
+            console.log(req.body);
 
             const cancerModelMap = {
                 'lung': LungDrugModel,
@@ -87,98 +185,30 @@ class drugInformationController {
                 'thyroid': ThyroidDrugModel
             };
 
-            const DrugModel = cancerModelMap[typeCancer.toLowerCase()];
-            
-            if (!DrugModel) {
-                return res.status(400).json({
-                    success: false,
-                    message: `Unsupported cancer type: ${typeCancer}`,
-                    data: []
-                });
+            const Model = cancerModelMap[typeCancer];
+            if (!Model) {
+                return res.status(400).json({ message: 'Invalid cancer type' });
             }
 
-            // Build search query with multiple criteria
-            let searchQuery = { $and: [] };
+            // Tạo điều kiện tìm kiếm
+            let query = {};
 
-            // Search by nomenclature if provided
-            if (nomenclature && nomenclature.trim() !== '') {
-                // Extract different parts of nomenclature for flexible matching
-                const nomenclatureParts = nomenclature.trim().split(/[():]/);
-                const baseNomenclature = nomenclatureParts[0]; // e.g., "NM_004958.4"
-                
-                searchQuery.$and.push({
-                    $or: [
-                        { nomenclature: { $regex: baseNomenclature, $options: 'i' } },
-                        { nomenclature: { $regex: nomenclature, $options: 'i' } }
-                    ]
-                });
+            if (gene) {
+                query.gene = gene;
             }
 
-            // Search by gene name if provided
-            if (geneName && geneName.trim() !== '') {
-                searchQuery.$and.push({
-                    $or: [
-                        { gene_name: { $regex: geneName.trim(), $options: 'i' } },
-                        { geneName: { $regex: geneName.trim(), $options: 'i' } }
-                    ]
-                });
-            }
+            console.log(query);
+            const results = await Model.find(query);
 
-            // If no search criteria provided, return all drugs for the cancer type
-            if (searchQuery.$and.length === 0) {
-                searchQuery = {};
-            }
-
-            console.log('Final search query:', JSON.stringify(searchQuery, null, 2));
-
-            const totalCount = await DrugModel.countDocuments(searchQuery);
-            const drugs = await DrugModel
-                .find(searchQuery)
-                .skip(skip)
-                .limit(limit)
-                .sort({ gene_name: 1, nomenclature: 1 }) // Sort by gene name and nomenclature
-                .lean();
-
-            const formattedDrugs = drugs.map(drug => ({
-                id: drug._id,
-                gene_name: drug.gene_name || drug.geneName,
-                nomenclature: drug.nomenclature,
-                aa_mutation: drug.aa_mutation || drug.aaMutation,
-                therapies: drug.therapies,
-                pmid: drug.pmid,
-                level: drug.level,
-                // Include any additional fields that might be relevant
-                cancer_type: typeCancer,
-                ...drug
-            }));
-
-            const response = {
-                success: true,
-                page,
-                limit,
-                totalItems: totalCount,
-                totalPages: Math.ceil(totalCount / limit),
-                cancerType: typeCancer,
-                searchCriteria: {
-                    nomenclature: nomenclature || 'all',
-                    geneName: geneName || 'all'
-                },
-                data: formattedDrugs
-            };
-
-            console.log(`Advanced search returning ${formattedDrugs.length} drugs for ${typeCancer} cancer`);
-            return res.status(200).json(response);
-
+            return res.status(200).json(results);
         } catch (error) {
-            console.error('Error in advanced searchDrug:', error);
-            return res.status(500).json({
-                success: false,
-                message: 'Internal server error during advanced drug search',
-                error: error.message,
-                data: []
-            });
+            return res.status(500).json({ message: 'Server error', error: error.message });
         }
     };
+
+    searchDrug = async (req, res) => {
+
+    }
 
     // ------> Begin <------- ONKOKB Drug fucntion
     findAll(req, res) {
@@ -230,13 +260,14 @@ class drugInformationController {
             const limit = parseInt(req.query.limit) || 10;
             const skip = (page - 1) * limit;
 
-            let { geneName, drugName, cancerMainType, cancerSubType } =
+            let { geneName, drugName, cancerMainType, cancerSubType, variant } =
                 req.body;
             console.log(req.body);
             geneName = geneName || '.*';
             drugName = drugName || '.*';
             cancerMainType = cancerMainType || '.*';
             cancerSubType = cancerSubType || '.*';
+
             console.log(geneName, drugName, cancerMainType, cancerSubType);
 
             const count = await drugInformationModel.countDocuments({
@@ -244,6 +275,7 @@ class drugInformationController {
                 drug: new RegExp(drugName),
                 cancer_main_type: new RegExp(cancerMainType),
                 cancer_sub_type: new RegExp(cancerSubType),
+                variant: new RegExp(alteration_name),
             });
 
             const totalPages = Math.ceil(count / limit);
@@ -254,6 +286,7 @@ class drugInformationController {
                     drug: new RegExp(drugName),
                     cancer_main_type: new RegExp(cancerMainType),
                     cancer_sub_type: new RegExp(cancerSubType),
+                    variant: new RegExp(alteration_name),
                 })
                 .select(
                     'gene drug alteration level cancer_main_type cancer_sub_type articles',
@@ -265,7 +298,7 @@ class drugInformationController {
             const mappedRecords = records.map((record) => ({
                 gene: record.gene,
                 drug: record.drug,
-                alteration: record.alteration,
+                alteration: record.alteration_name,
                 level: record.level,
                 cancer_main_type: record.cancer_main_type,
                 cancer_sub_type: record.cancer_sub_type,
@@ -376,136 +409,226 @@ class drugInformationController {
     };
 
 
-    getDrug = (req, res) => {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 5;
-        const typeCancer = req.query.typeCancer || '';
-        const startIndex = (page - 1) * limit;
-        const endIndex = page * limit;
-        const IDTest = req.query.id;
+    getDrug = async (req, res) => {
+        try {
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 5;
+            const startIndex = (page - 1) * limit;
+            const endIndex = page * limit;
+            console.log(req.body);
 
-        const geneQuery = req.query.gene?.trim().toLowerCase() || '';
-        const drugQuery = req.query.drug?.trim().toLowerCase() || '';
+            const typeCancer = (req.body.typeCancer || '').toLowerCase();
+            const qGene = req.body.gene;
+            let variants = [];
 
-        console.log("IDTest: ", IDTest);
-        console.log("typeCancer: ", typeCancer);
+            // Nhận variants từ query (?variants=...) JSON-string / CSV / lặp
+            const qVariants = req.body.variants;
+            if (qVariants) {
+                if (Array.isArray(qVariants)) {
+                    variants = qVariants.map(v => String(v)).filter(Boolean);
+                } else if (typeof qVariants === 'string') {
+                    try {
+                        const parsed = JSON.parse(qVariants);
+                        variants = Array.isArray(parsed) ? parsed : [];
+                    } catch {
+                        variants = qVariants.split(',').map(s => s.trim()).filter(Boolean);
+                    }
+                }
+            }
+            // Nếu có cặp đơn lẻ gene + variant
+            // if (!variants.length && qVariant) {
+            //     variants = [qVariant];
+            // }
 
-        dataTestModel.find({ IDTest }, (err, items) => {
-            if (err) {
-                console.error(err);
-                return res.status(500).send('Internal Server Error');
+            if (!variants.length) {
+                return res.status(400).json({ error: 'Missing variants or variant in query' });
             }
 
-            if (items.length === 0) {
-                return res.status(404).send('No patient mutation data found');
+            // Chọn Model theo typeCancer giống searchDrugByVariant
+            const cancerModelMap = {
+                'lung': LungDrugModel,
+                'liver': LiverDrugModel,
+                'hepatocellular_carcinoma': LiverDrugModel,
+                'breast': BreastDrugModel,
+                'colorectal': ColorectalDrugModel,
+                'large_intestine': ColorectalDrugModel,
+                'thyroid': ThyroidDrugModel
+            };
+            const Model = cancerModelMap[typeCancer];
+            if (!Model) {
+                return res.status(400).json({ error: 'Invalid or missing typeCancer' });
             }
 
-            let patientGenes = items
-                .map(item => item.Gene?.trim().toUpperCase())
-                .filter(Boolean);
-            patientGenes = [...new Set(patientGenes)];
+            // Ghép OR cho nhiều biến thể; mỗi biến thể là một $and gồm:
+            // - (optional) gene (nếu gửi global gene)
+            // - các điều kiện từ buildVariantSearchConditions(variant)
+            // - ưu tiên refSeqId (NM_...) -> nomenclature
+            const orBlocks = [];
+            for (const raw of variants) {
+                const v = typeof raw === 'string' ? raw : (raw?.variant || raw?.alteration || '');
+                if (!v) continue;
 
-            console.log("Patient genes: ", patientGenes);
+                const andConds = [];
 
-            const drugFilePath = path.join(__dirname, `../../../data/dataDrug/${typeCancer}_asia_BE.json`);
+                // Gene toàn cục (nếu có) — giống searchDrugByVariant khi người dùng gửi gene
+                if (qGene) andConds.push({ gene: qGene });
 
-            fs.promises.readFile(drugFilePath, 'utf8')
-                .then(data => {
-                    const drugs = JSON.parse(data);
+                // Ưu tiên refSeqId nếu có (NM_1234.x)
+                const refSeqMatch = String(v).match(/(NM_\d+(?:\.\d+)?)/);
+                if (refSeqMatch) {
+                    const refSeqId = refSeqMatch[1];
+                    andConds.push({ nomenclature: { $regex: refSeqId, $options: 'i' } });
+                }
 
-                    const matchedDrugs = drugs.filter(drug =>
-                        patientGenes.includes(drug['Gene name']?.trim().toUpperCase())
-                    );
+                // Các pattern tổng hợp (nomenclature, p./c./aa_mutation/position, …)
+                const patterns = buildVariantSearchConditions(String(v));
+                andConds.push(...patterns);
 
-                    const groupedMap = new Map();
+                // Loại bỏ trùng key giống nhau để tránh $and quá dài (tuỳ ý, không bắt buộc)
+                // Ở đây giữ nguyên để giữ độ “bắt” cao.
 
-                    matchedDrugs.forEach(drug => {
-                        const key = `${drug['Gene name']}_${drug['AA Mutation'] || 'NO_AA'}`;
+                orBlocks.push({ $and: andConds });
+            }
 
-                        if (!groupedMap.has(key)) {
-                            groupedMap.set(key, {
-                                ...drug,
-                                Therapies: [drug.Therapies],
-                                pmid: [drug.pmid],
-                            });
-                        } else {
-                            const existing = groupedMap.get(key);
-                            existing.Therapies.push(drug.Therapies);
-                            existing.pmid.push(drug.pmid);
-                        }
+            if (!orBlocks.length) {
+                return res.status(400).json({ error: 'No valid variant conditions' });
+            }
+
+            const query = { $or: orBlocks };
+
+            const records = await Model
+                .find(query)
+                .select('gene alteration drug level cancer_main_type cancer_sub_type articles')
+                .lean();
+
+            // Gom nhóm theo gene + alteration (giữ articles là danh sách pmid)
+            const groupedMap = new Map();
+            for (const r of records) {
+                const key = `${r.gene || 'NO_GENE'}_${r.alteration || 'NO_AA'}`;
+                if (!groupedMap.has(key)) {
+                    groupedMap.set(key, {
+                        gene: r.gene,
+                        alteration: r.alteration,
+                        level: r.level,
+                        cancer_main_type: r.cancer_main_type,
+                        cancer_sub_type: r.cancer_sub_type,
+                        drug: Array.isArray(r.drug) ? [...r.drug] : (r.drug ? [r.drug] : []),
+                        articles: (r.articles || []).map(a => a.pmid),
                     });
+                } else {
+                    const ex = groupedMap.get(key);
+                    ex.drug = [...new Set(ex.drug.concat(r.drug || []))];
+                    ex.articles = [...new Set(ex.articles.concat((r.articles || []).map(a => a.pmid)))];
+                }
+            }
 
-                    const groupedDrugs = Array.from(groupedMap.values()).map(item => ({
-                        ...item,
-                        Therapies: [...new Set(item.Therapies)].join(' | '),
-                        pmid: [...new Set(item.pmid)].join(' | '),
-                    }));
+            const grouped = Array.from(groupedMap.values());
+            const paginated = grouped.slice(startIndex, endIndex);
 
-                    const filteredDrugs = groupedDrugs.filter(item => {
-                        const geneName = item['Gene name']?.toLowerCase() || '';
-                        const drugName = item['Therapies']?.toLowerCase() || '';
-                        return geneName.includes(geneQuery) && drugName.includes(drugQuery);
-                    });
-
-                    const paginatedDrugs = filteredDrugs.slice(startIndex, endIndex);
-
-                    const response = {
-                        page,
-                        limit,
-                        totalItems: filteredDrugs.length,
-                        totalPages: Math.ceil(filteredDrugs.length / limit),
-                        dataDrug: paginatedDrugs,
-                    };
-
-                    console.log('Số thuốc sau khi gộp:', groupedDrugs.length);
-                    res.json(response);
-                })
-                .catch(err => {
-                    console.error('Error reading or parsing drug file: ', err);
-                    res.status(500).send('Internal Server Error');
-                });
-        });
+            return res.json({
+                page,
+                limit,
+                totalItems: grouped.length,
+                totalPages: Math.ceil(grouped.length / limit),
+                dataDrug: paginated,
+            });
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
     };
 
-    // searchDrug = (req, res) => {
+
+
+    // getDrug = (req, res) => {
+    //     const page = parseInt(req.query.page) || 1;
     //     const limit = parseInt(req.query.limit) || 5;
     //     const typeCancer = req.query.typeCancer || '';
-    //     const region = req.body.region[0];
-    //     const geneName = req.body.geneName;
-    //     const startIndex = 0;
-    //     const endIndex = Infinity;
-    //     console.log('region: ' + region);
+    //     const startIndex = (page - 1) * limit;
+    //     const endIndex = page * limit;
+    //     const IDTest = req.query.id;
 
-    //     fs.readFile(
-    //         `data/dataDrug/${typeCancer}_${region}_BE.json`,
-    //         'utf8',
-    //         (err, data) => {
-    //             if (err) {
-    //                 console.error(err);
-    //                 return res.status(500).send('Internal Server Error');
-    //             }
+    //     const geneQuery = req.query.gene?.trim().toLowerCase() || '';
+    //     const drugQuery = req.query.drug?.trim().toLowerCase() || '';
 
-    //             const jsonData = JSON.parse(data);
+    //     console.log("IDTest: ", IDTest);
+    //     console.log("typeCancer: ", typeCancer);
 
-    //             let filteredData = jsonData;
-    //             if (geneName) {
-    //                 filteredData = jsonData.filter(
-    //                     (item) => item['Gene name'] === geneName,
+    //     dataTestModel.find({ IDTest }, (err, items) => {
+    //         if (err) {
+    //             console.error(err);
+    //             return res.status(500).send('Internal Server Error');
+    //         }
+
+    //         if (items.length === 0) {
+    //             return res.status(404).send('No patient mutation data found');
+    //         }
+
+    //         let patientGenes = items
+    //             .map(item => item.Gene?.trim().toUpperCase())
+    //             .filter(Boolean);
+    //         patientGenes = [...new Set(patientGenes)];
+
+    //         console.log("Patient genes: ", patientGenes);
+
+    //         const drugFilePath = path.join(__dirname, `../../../data/dataDrug/${typeCancer}_asia_BE.json`);
+
+    //         fs.promises.readFile(drugFilePath, 'utf8')
+    //             .then(data => {
+    //                 const drugs = JSON.parse(data);
+
+    //                 const matchedDrugs = drugs.filter(drug =>
+    //                     patientGenes.includes(drug['Gene name']?.trim().toUpperCase())
     //                 );
-    //             }
 
-    //             const dataDrug = filteredData.slice(startIndex, endIndex);
+    //                 const groupedMap = new Map();
 
-    //             const response = {
-    //                 limit,
-    //                 totalItems: filteredData.length,
-    //                 totalPages: Math.ceil(filteredData.length / limit),
-    //                 dataDrug,
-    //             };
+    //                 matchedDrugs.forEach(drug => {
+    //                     const key = `${drug['Gene name']}_${drug['AA Mutation'] || 'NO_AA'}`;
 
-    //             res.json(response);
-    //         },
-    //     );
+    //                     if (!groupedMap.has(key)) {
+    //                         groupedMap.set(key, {
+    //                             ...drug,
+    //                             Therapies: [drug.Therapies],
+    //                             pmid: [drug.pmid],
+    //                         });
+    //                     } else {
+    //                         const existing = groupedMap.get(key);
+    //                         existing.Therapies.push(drug.Therapies);
+    //                         existing.pmid.push(drug.pmid);
+    //                     }
+    //                 });
+
+    //                 const groupedDrugs = Array.from(groupedMap.values()).map(item => ({
+    //                     ...item,
+    //                     Therapies: [...new Set(item.Therapies)].join(' | '),
+    //                     pmid: [...new Set(item.pmid)].join(' | '),
+    //                 }));
+
+    //                 const filteredDrugs = groupedDrugs.filter(item => {
+    //                     const geneName = item['Gene name']?.toLowerCase() || '';
+    //                     const drugName = item['Therapies']?.toLowerCase() || '';
+    //                     return geneName.includes(geneQuery) && drugName.includes(drugQuery);
+    //                 });
+
+    //                 const paginatedDrugs = filteredDrugs.slice(startIndex, endIndex);
+
+    //                 const response = {
+    //                     page,
+    //                     limit,
+    //                     totalItems: filteredDrugs.length,
+    //                     totalPages: Math.ceil(filteredDrugs.length / limit),
+    //                     dataDrug: paginatedDrugs,
+    //                 };
+
+    //                 console.log('Số thuốc sau khi gộp:', groupedDrugs.length);
+    //                 res.json(response);
+    //             })
+    //             .catch(err => {
+    //                 console.error('Error reading or parsing drug file: ', err);
+    //                 res.status(500).send('Internal Server Error');
+    //             });
+    //     });
     // };
 
     getEvidenceAsiaMixed(req, res) {

@@ -16,8 +16,9 @@ class uploadFile {
                 // Use patientID as the filename with the original extension
                 const patientID = req.body.patientID || 'unknown'; // Fallback to 'unknown' if patientID is missing
                 const originalName = file.originalname;
+                const readType = req.body.readType || 'single'; // Fallback to 'single' if readType is missing
                 const fileExtension = path.extname(originalName).toLowerCase();
-                cb(null, `${patientID}${fileExtension}`);
+                cb(null, `${patientID}_${readType}${fileExtension}`);
             },
         });
         const upload = multer({
